@@ -24,7 +24,7 @@ package main
 
 import (
 	"errors"
-	"fmt"
+	//"fmt"
 	//"strconv"
 
 	"github.com/hyperledger/fabric/core/chaincode/shim"
