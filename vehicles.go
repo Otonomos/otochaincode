@@ -16,48 +16,93 @@ limitations under the License.
 
 package main
 
-//WARNING - this chaincode's ID is hard-coded in chaincode_example04 to illustrate one way of
-//calling chaincode from a chaincode. If this example is modified, chaincode_example04.go has
-//to be modified as well with the new ID of chaincode_example02.
-//chaincode_example05 show's how chaincode ID can be passed in as a parameter instead of
-//hard-coding.
-
 import (
 	"errors"
 	"fmt"
-	//"strconv"
+	"strconv"
 
 	"github.com/hyperledger/fabric/core/chaincode/shim"
+	"github.com/hyperledger/fabric/core/util"
 )
+
+// This chaincode is a test for chaincode invoking another chaincode - invokes chaincode_example02
 
 // SimpleChaincode example simple Chaincode implementation
 type SimpleChaincode struct {
 }
 
+func (t *SimpleChaincode) GetChaincodeToCall() string {
+	//This is the hashcode for github.com/hyperledger/fabric/core/example/chaincode/chaincode_example02
+	//if the example is modifed this hashcode will change!!
+	chainCodeToCall := "d8f2ef95a72aa85b0f92580580176479fcd0874f6b0855ae21b98dcb926353d357e94cc80b5fb9b789d3a0acfdf143166b3bdc3e483feabeb4ab0b0a530b83a6"
+	return chainCodeToCall
+}
+
+// Init takes two arguements, a string and int. These are stored in the key/value pair in the state
 func (t *SimpleChaincode) Init(stub shim.ChaincodeStubInterface) ([]byte, error) {
-	
-	return nil, nil
-}
-
-// Transaction makes payment of X units from A to B
-func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, error) {
-	
-
-	return nil, nil
-}
-
-// Deletes an entity from state
-func (t *SimpleChaincode) delete(stub shim.ChaincodeStubInterface, args []string) ([]byte, error) {
-	if len(args) != 1 {
-		return nil, errors.New("Incorrect number of arguments. Expecting 1")
+	var event string // Indicates whether event has happened. Initially 0
+	var eventVal int // State of event
+	var err error
+	_, args := stub.GetFunctionAndParameters()
+	if len(args) != 2 {
+		return nil, errors.New("Incorrect number of arguments. Expecting 2")
 	}
 
-	A := args[0]
-
-	// Delete the key from the state in ledger
-	err := stub.DelState(A)
+	// Initialize the chaincode
+	event = args[0]
+	eventVal, err = strconv.Atoi(args[1])
 	if err != nil {
-		return nil, errors.New("Failed to delete state")
+		return nil, errors.New("Expecting integer value for event status")
+	}
+	fmt.Printf("eventVal = %d\n", eventVal)
+
+	err = stub.PutState(event, []byte(strconv.Itoa(eventVal)))
+	if err != nil {
+		return nil, err
+	}
+
+	return nil, nil
+}
+
+// Invoke invokes another chaincode - chaincode_example02, upon receipt of an event and changes event state
+func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, error) {
+	var event string // Event entity
+	var eventVal int // State of event
+	var err error
+	_, args := stub.GetFunctionAndParameters()
+	if len(args) != 2 {
+		return nil, errors.New("Incorrect number of arguments. Expecting 2")
+	}
+
+	event = args[0]
+	eventVal, err = strconv.Atoi(args[1])
+	if err != nil {
+		return nil, errors.New("Expected integer value for event state change")
+	}
+
+	if eventVal != 1 {
+		fmt.Printf("Unexpected event. Doing nothing\n")
+		return nil, nil
+	}
+
+	// Get the chaincode to call from the ledger
+	chainCodeToCall := t.GetChaincodeToCall()
+
+	f := "invoke"
+	invokeArgs := util.ToChaincodeArgs(f, "a", "b", "10")
+	response, err := stub.InvokeChaincode(chainCodeToCall, invokeArgs)
+	if err != nil {
+		errStr := fmt.Sprintf("Failed to invoke chaincode. Got error: %s", err.Error())
+		fmt.Printf(errStr)
+		return nil, errors.New(errStr)
+	}
+
+	fmt.Printf("Invoke chaincode successful. Got response %s", string(response))
+
+	// Write the event state back to the ledger
+	err = stub.PutState(event, []byte(strconv.Itoa(eventVal)))
+	if err != nil {
+		return nil, err
 	}
 
 	return nil, nil
@@ -65,8 +110,34 @@ func (t *SimpleChaincode) delete(stub shim.ChaincodeStubInterface, args []string
 
 // Query callback representing the query of a chaincode
 func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error) {
-	
-	return nil, nil
+	function, args := stub.GetFunctionAndParameters()
+	if function != "query" {
+		return nil, errors.New("Invalid query function name. Expecting \"query\"")
+	}
+	var event string // Event entity
+	var err error
+
+	if len(args) != 1 {
+		return nil, errors.New("Incorrect number of arguments. Expecting entity to query")
+	}
+
+	event = args[0]
+
+	// Get the state from the ledger
+	eventValbytes, err := stub.GetState(event)
+	if err != nil {
+		jsonResp := "{\"Error\":\"Failed to get state for " + event + "\"}"
+		return nil, errors.New(jsonResp)
+	}
+
+	if eventValbytes == nil {
+		jsonResp := "{\"Error\":\"Nil value for " + event + "\"}"
+		return nil, errors.New(jsonResp)
+	}
+
+	jsonResp := "{\"Name\":\"" + event + "\",\"Amount\":\"" + string(eventValbytes) + "\"}"
+	fmt.Printf("Query Response:%s\n", jsonResp)
+	return []byte(jsonResp), nil
 }
 
 func main() {
